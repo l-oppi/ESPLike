@@ -46,7 +46,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 			ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
 			if (output_buffer != NULL) {
 				// Response is accumulated in output_buffer. Uncomment the below line to print the accumulated response
-				// ESP_LOG_BUFFER_HEX(TAG, output_buffer, output_len);
+				ESP_LOG_BUFFER_HEX(TAG, output_buffer, output_len);
 				free(output_buffer);
 				output_buffer = NULL;
 			}

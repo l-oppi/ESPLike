@@ -29,6 +29,7 @@ void monitoring_task(void *pvParameter)
 void init_system()
 {
 	spotify_init();
+	spotify_refresh_access_token();
 }
 
 void cb_connection_ok(void *pvParameter)
