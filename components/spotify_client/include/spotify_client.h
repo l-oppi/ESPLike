@@ -11,7 +11,8 @@
 #include "esp_system.h"
 
 #include "esp_http_client.h" 
-#include "esp_tls.h" 
+#include "esp_tls.h"
+#include "time_manager.h"
 #include "cJSON.h"
 
 #define MAX_SONG_TITLE_LENGTH       (64U)
@@ -129,14 +130,14 @@ typedef struct currently_playing_t
 
 typedef struct spotify_access_t
 {
-  uint8_t is_fresh;
+  bool is_fresh;
   char client_id[128];
   char client_secret[128];
   char refresh_token[256];
-  int token_time;
+  uint32_t token_expiration_time;
   char access_token[256];
 } spotify_access_t;
 
 void spotify_init(void);
 bool spotify_refresh_access_token(void);
-bool spotify_get_player_state(player_details_t *player_details);
+bool spotify_get_player_details(player_details_t *player_details);

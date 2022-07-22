@@ -3,7 +3,7 @@
 #define RESPONSE_BUF_SIZE (1024 * 8)
 static const char *TAG = "NewSpotifyClient";
 spotify_access_t spotify_access;
-static char* response_buf = NULL;
+static char* local_response_buf = NULL;
 
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
@@ -46,7 +46,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 			ESP_LOGD(TAG, "HTTP_EVENT_ON_FINISH");
 			if (output_buffer != NULL) {
 				// Response is accumulated in output_buffer. Uncomment the below line to print the accumulated response
-				ESP_LOG_BUFFER_HEX(TAG, output_buffer, output_len);
+				// ESP_LOG_BUFFER_HEX(TAG, output_buffer, output_len);
 				free(output_buffer);
 				output_buffer = NULL;
 			}
@@ -62,15 +62,10 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 					output_buffer = NULL;
 				}
 				output_len = 0;
-				ESP_LOGE(TAG, "Last esp error code: 0x%x", err);
-				ESP_LOGE(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
+				// ESP_LOGE(TAG, "Last esp error code: 0x%x", err);
+				// ESP_LOGE(TAG, "Last mbedtls failure: 0x%x", mbedtls_err);
 			}
 			break;
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-		case HTTP_EVENT_REDIRECT:
-			ESP_LOGD(TAG, "HTTP_EVENT_REDIRECT");
-			break;
-#endif
 	}
 	return ESP_OK;
 }
@@ -82,8 +77,9 @@ void spotify_init()
     memset(spotify_access.client_secret, 0, sizeof(spotify_access.client_secret));
     memset(spotify_access.refresh_token, 0, sizeof(spotify_access.refresh_token));
     memset(spotify_access.access_token, 0, sizeof(spotify_access.access_token));
-    response_buf = (char*)malloc(RESPONSE_BUF_SIZE);
-
+	
+    local_response_buf = (char*)malloc(RESPONSE_BUF_SIZE);
+	memset(local_response_buf, 0, RESPONSE_BUF_SIZE);
     // Context init.
 
     snprintf(spotify_access.client_id, sizeof(spotify_access.client_id), "%s", CONFIG_SPOTIFY_CLIENT_ID);
@@ -94,21 +90,19 @@ void spotify_init()
     //    spotify_access.is_fresh = spotify_refresh_access_token();
     // }
     player_details_t player_details;
-    spotify_get_player_state(&player_details);
+    spotify_get_player_details(&player_details);
 }
 
 bool spotify_refresh_access_token()
 {
     ESP_LOGI(TAG, "http_client_content_length url=%s",SPOTIFY_ACCOUNTS_HOST);
 	size_t content_length;
-	
 	esp_http_client_config_t config = {
 		.host = SPOTIFY_ACCOUNTS_HOST,
         .transport_type = HTTP_TRANSPORT_OVER_SSL,
 		.event_handler = _http_event_handler,
         .path = SPOTIFY_TOKEN_ENDPOINT,
-		//.user_data = local_response_buffer, // Pass address of local buffer to get response
-
+		.user_data = local_response_buf,
 	};
 	esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_method(client, HTTP_METHOD_POST);
@@ -119,14 +113,10 @@ bool spotify_refresh_access_token()
             spotify_access.refresh_token);
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
     
-	// GET
+	// GET Token
 	esp_err_t err = esp_http_client_perform(client);
 	if (err == ESP_OK) {
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-		ESP_LOGD(TAG, "HTTP GET Status = %d, content_length = %lld",
-#else
 		ESP_LOGD(TAG, "HTTP GET Status = %d, content_length = %d",
-#endif
 				esp_http_client_get_status_code(client),
 				esp_http_client_get_content_length(client));
 		content_length = esp_http_client_get_content_length(client);
@@ -135,55 +125,58 @@ bool spotify_refresh_access_token()
 		ESP_LOGW(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
 		content_length = 0;
 	}
-    memset(response_buf, 0, RESPONSE_BUF_SIZE);
-    // ? How do i retrieve http reponse data (esp_http_client_read_response and esp_http_client_read did not work) ?
-    int errn = esp_http_client_read_response(client, response_buf, RESPONSE_BUF_SIZE);
-    if (errn < 0) {
+    if (content_length <= 0) {
         ESP_LOGW(TAG, "Could not read HTTP CLIENT.");
     } else {
-        ESP_LOGI(TAG, "Response Size: %d", errn);
+        ESP_LOGI(TAG, "Response Size: %d", content_length);
         cJSON* response_json = NULL;
-        response_json = cJSON_Parse(response_buf);
+        response_json = cJSON_Parse(local_response_buf);
         cJSON* error = cJSON_GetObjectItem(response_json, "error");
         if (error!=NULL) {
             ESP_LOGW(TAG, "Error on request");
-            cJSON* error_message = cJSON_GetObjectItem(response_json, "message");
-            if (error_message != NULL)
-            {
-                char* error_message_value = cJSON_GetStringValue(error_message);
-                if (strcmp(error_message_value, "The access token expired") == 0)
-                {
-                    ESP_LOGW(TAG, "The access token expired!");
-                }
-                else if (strcmp(error_message_value, "Only valid bearer authentication supported") == 0)
-                {
-                    ESP_LOGW(TAG, "The access token is incorrect!");
-                }
-            }
+				goto cleanup;
+            // cJSON* error_message = cJSON_GetObjectItem(response_json, "message");
+            // if (error_message != NULL)
+            // {
+            // }
         } else {
             cJSON* access_token = cJSON_GetObjectItem(response_json, "access_token");
+            cJSON* expires_in = cJSON_GetObjectItem(response_json, "expires_in");
             if (access_token!=NULL) {
-                char* access_token_value = cJSON_GetStringValue(access_token);
+				char* access_token_value = cJSON_GetObjectItem(response_json, "access_token")->valuestring;
+                uint32_t expiration_time = cJSON_GetNumberValue(expires_in);
                 if (access_token_value) {
                     ESP_LOGI(TAG, "Storing a new access token");
+                    ESP_LOGI(TAG, "Expires in: %ld", expiration_time);
                     strncpy(spotify_access.access_token, access_token_value, strlen(access_token_value));
+					spotify_access.token_expiration_time = time_seconds() + expiration_time;
                     spotify_access.is_fresh = true;
+                    ESP_LOGI(TAG, "Expires in: %ld", spotify_access.token_expiration_time);
                 }
                 ESP_LOGI(TAG, "Access Token Found");
             } else {
-                ESP_LOGW(TAG, "No Access Token Found.");
+                ESP_LOGW(TAG, "Access Token Not Found.");
             }
         }
-        if(response_json) cJSON_Delete(response_json);
-        memset(response_buf, 0, RESPONSE_BUF_SIZE);
+cleanup:
+		if(response_json) cJSON_Delete(response_json);
+		memset(local_response_buf, 0, RESPONSE_BUF_SIZE);
     }
-    
 	esp_http_client_cleanup(client);
-	return content_length;
     return false;
 }
 
-bool spotify_get_player_state(player_details_t *player_details)
+bool spotify_get_player_details(player_details_t *player_details)
 {
+	// size_t content_length;
+	// esp_http_client_config_t config = {
+	// 	.host = SPOTIFY_HOST,
+    //     .transport_type = HTTP_TRANSPORT_OVER_SSL,
+	// 	.event_handler = _http_event_handler,
+    //     .path = SPOTIFY_PLAYER_ENDPOINT,
+	// 	.user_data = local_response_buf,
+	// };
+	// esp_http_client_handle_t client = esp_http_client_init(&config);
+    // esp_http_client_set_method(client, HTTP_METHOD_POST);
     return false;
 }
