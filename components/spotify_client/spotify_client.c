@@ -278,3 +278,61 @@ cleanup:
     // return response_data;
 	return false;
 }
+
+bool spotify_get_currently_playig()
+{
+	if (!spotify_is_access_token_fresh())
+		if(!spotify_refresh_access_token())
+			return false;
+
+	snprintf(authorization_header, 1024, "Bearer %s", spotify_access.access_token);
+
+	size_t content_length;
+	esp_http_client_config_t config = {
+		.host = SPOTIFY_HOST,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
+		.event_handler = _http_event_handler,
+        .path = SPOTIFY_CURRENTLY_PLAYING_ENDPOINT,
+	};
+	esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Accept", "application/json");
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "Authorization", authorization_header);
+	esp_http_client_set_method(client, HTTP_METHOD_GET);
+	esp_err_t err = esp_http_client_open(client, 0);
+	int data_read = 0;
+	if (err != ESP_OK) { 
+		ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err)); 
+	} else { 
+		content_length = esp_http_client_fetch_headers(client); 
+		if (content_length < 0) { 
+			ESP_LOGE(TAG, "HTTP client fetch headers failed"); 
+		} else { 
+			data_read = esp_http_client_read_response(client, local_response_buf, RESPONSE_BUF_SIZE); 
+			if (data_read > 0) { 
+				ESP_LOGD(TAG, "HTTP GET Status = %d, content_length = %d", 
+						esp_http_client_get_status_code(client), 
+						esp_http_client_get_content_length(client)); 
+				// ESP_LOG_BUFFER_HEX(TAG, local_response_buf, data_read); 
+			} else { 
+				ESP_LOGE(TAG, "Failed to read response"); 
+			}
+		}
+	}
+	esp_http_client_close(client); 
+
+	cJSON* response_json = NULL;
+	if (data_read > 0) {
+		response_json = cJSON_Parse(local_response_buf);
+		cJSON* error = cJSON_GetObjectItem(response_json, "error");
+		if (error!=NULL)
+			ESP_LOGW(TAG, "Error on request");
+			goto cleanup;
+	}
+cleanup:
+	if(response_json) cJSON_Delete(response_json);
+	memset(local_response_buf, 0, RESPONSE_BUF_SIZE);
+	memset(authorization_header, 0, 1024);
+	esp_http_client_cleanup(client);
+	return false;
+}

@@ -141,3 +141,4 @@ typedef struct spotify_access_t
 void spotify_init(void);
 bool spotify_refresh_access_token(void);
 bool spotify_get_player_details(player_details_t *player_details);
+bool spotify_get_current_playig(void);
