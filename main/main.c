@@ -10,8 +10,9 @@
 #include "spotify_client.h"
 #include "wifi_manager.h"
 
+static bool internet_connection =  false;
 /* @brief tag used for ESP serial console messages */
-static const char TAG[] = "main";
+// static const char TAG[] = "main";
 
 /**
  * @brief RTOS task that periodically prints the heap memory available.
@@ -34,14 +35,7 @@ void init_system()
 
 void cb_connection_ok(void *pvParameter)
 {
-	ip_event_got_ip_t* param = (ip_event_got_ip_t*)pvParameter;
-
-	/* transform IP to human readable string */
-	char str_ip[16];
-	esp_ip4addr_ntoa(&param->ip_info.ip, str_ip, IP4ADDR_STRLEN_MAX);
-
-	ESP_LOGI(TAG, "I have a connection and my IP is %s!", str_ip);
-	init_system();
+	internet_connection = true;	
 }
 
 
@@ -55,4 +49,9 @@ void app_main()
 
 	/* your code should go here. Here we simply create a task on core 2 that monitors free heap memory */
 	xTaskCreatePinnedToCore(&monitoring_task, "monitoring_task", 2048, NULL, 1, NULL, 1);
+	while(!internet_connection){
+		vTaskDelay(pdMS_TO_TICKS(1000));
+	}
+	init_system();
+
 }

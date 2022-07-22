@@ -83,15 +83,15 @@ typedef struct spotify_device_t
   bool is_active;
   bool is_restricted;
   bool is_private_session;
-  int volumePercent;
+  int volume_percent;
 } spotify_device_t;
 
 typedef struct player_details_t
 {
   spotify_device_t device;
-  long progress_ms;
+  uint32_t progress_ms;
   bool is_playing;
-  repeat_options_t repeate_state;
+  repeat_options_t repeat_state;
   bool shuffle_state;
 } player_details_t;
 
@@ -124,8 +124,8 @@ typedef struct currently_playing_t
   spotify_image_t album_images[SPOTIFY_NUM_ALBUM_IMAGES];
   int num_images;
   bool is_playing;
-  long progress_ms;
-  long duration_ms;
+  uint32_t progress_ms;
+  uint32_t duration_ms;
 } currently_playing_t;
 
 typedef struct spotify_access_t

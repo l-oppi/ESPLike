@@ -4,6 +4,8 @@
 static const char *TAG = "NewSpotifyClient";
 spotify_access_t spotify_access;
 static char* local_response_buf = NULL;
+static char* authorization_header = NULL;
+currently_playing_t currently_playing;
 
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
@@ -79,7 +81,9 @@ void spotify_init()
     memset(spotify_access.access_token, 0, sizeof(spotify_access.access_token));
 	
     local_response_buf = (char*)malloc(RESPONSE_BUF_SIZE);
+    authorization_header = (char*)malloc(1024);
 	memset(local_response_buf, 0, RESPONSE_BUF_SIZE);
+	memset(authorization_header, 0, 1024);
     // Context init.
 
     snprintf(spotify_access.client_id, sizeof(spotify_access.client_id), "%s", CONFIG_SPOTIFY_CLIENT_ID);
@@ -91,11 +95,19 @@ void spotify_init()
     // }
     player_details_t player_details;
     spotify_get_player_details(&player_details);
+	ESP_LOGI(TAG, "Player Device Name: %s", player_details.device.name);
+	ESP_LOGI(TAG, "Player Device ID: %s", player_details.device.id);
+}
+
+bool spotify_is_access_token_fresh()
+{	
+	if(spotify_access.is_fresh)
+		return time_seconds() < spotify_access.token_expiration_time;
+	return false;
 }
 
 bool spotify_refresh_access_token()
 {
-    ESP_LOGI(TAG, "http_client_content_length url=%s",SPOTIFY_ACCOUNTS_HOST);
 	size_t content_length;
 	esp_http_client_config_t config = {
 		.host = SPOTIFY_ACCOUNTS_HOST,
@@ -103,6 +115,7 @@ bool spotify_refresh_access_token()
 		.event_handler = _http_event_handler,
         .path = SPOTIFY_TOKEN_ENDPOINT,
 		.user_data = local_response_buf,
+		.disable_auto_redirect = true,
 	};
 	esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_method(client, HTTP_METHOD_POST);
@@ -128,13 +141,13 @@ bool spotify_refresh_access_token()
     if (content_length <= 0) {
         ESP_LOGW(TAG, "Could not read HTTP CLIENT.");
     } else {
-        ESP_LOGI(TAG, "Response Size: %d", content_length);
+        ESP_LOGD(TAG, "Response Size: %d", content_length);
         cJSON* response_json = NULL;
         response_json = cJSON_Parse(local_response_buf);
         cJSON* error = cJSON_GetObjectItem(response_json, "error");
         if (error!=NULL) {
             ESP_LOGW(TAG, "Error on request");
-				goto cleanup;
+			goto cleanup;
             // cJSON* error_message = cJSON_GetObjectItem(response_json, "message");
             // if (error_message != NULL)
             // {
@@ -146,7 +159,7 @@ bool spotify_refresh_access_token()
 				char* access_token_value = cJSON_GetObjectItem(response_json, "access_token")->valuestring;
                 uint32_t expiration_time = cJSON_GetNumberValue(expires_in);
                 if (access_token_value) {
-                    ESP_LOGI(TAG, "Storing a new Access Token");
+                    ESP_LOGD(TAG, "Storing a new Access Token");
                     strncpy(spotify_access.access_token, access_token_value, strlen(access_token_value));
 					spotify_access.token_expiration_time = time_seconds() + expiration_time;
                     spotify_access.is_fresh = true;
@@ -161,20 +174,81 @@ cleanup:
 		memset(local_response_buf, 0, RESPONSE_BUF_SIZE);
     }
 	esp_http_client_cleanup(client);
-    return false;
+    return time_seconds() < spotify_access.token_expiration_time;
 }
 
 bool spotify_get_player_details(player_details_t *player_details)
 {
+	if (!spotify_is_access_token_fresh())
+		if(!spotify_refresh_access_token())
+			return false;
+
+	snprintf(authorization_header, 1024, "Bearer %s", spotify_access.access_token);
+
 	// size_t content_length;
-	// esp_http_client_config_t config = {
-	// 	.host = SPOTIFY_HOST,
-    //     .transport_type = HTTP_TRANSPORT_OVER_SSL,
-	// 	.event_handler = _http_event_handler,
-    //     .path = SPOTIFY_PLAYER_ENDPOINT,
-	// 	.user_data = local_response_buf,
-	// };
-	// esp_http_client_handle_t client = esp_http_client_init(&config);
-    // esp_http_client_set_method(client, HTTP_METHOD_POST);
-    return false;
+	esp_http_client_config_t config = {
+		.host = SPOTIFY_HOST,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
+		.event_handler = _http_event_handler,
+        .path = SPOTIFY_PLAYER_ENDPOINT,
+		.user_data = local_response_buf,
+		.disable_auto_redirect = true,
+	};
+	esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Authorization", authorization_header);
+	esp_http_client_set_method(client, HTTP_METHOD_GET);
+
+	esp_err_t err = esp_http_client_perform(client);
+
+	if (err == ESP_OK)
+	{
+		ESP_LOGD(TAG, "Status = %d, content_length = %d",
+				esp_http_client_get_status_code(client),
+				esp_http_client_get_content_length(client));
+	} else {
+		ESP_LOGW(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+	}
+	cJSON* response_json = NULL;
+	response_json = cJSON_Parse(local_response_buf);
+	cJSON* error = cJSON_GetObjectItem(response_json, "error");
+	if (error!=NULL) {
+		ESP_LOGW(TAG, "Error on request");
+	}
+
+	cJSON* device = cJSON_GetObjectItem(response_json, "device");
+	bool response_data = (device != NULL);
+	if (!response_data)
+		goto cleanup;
+	player_details->device.id= cJSON_GetObjectItem(device, "id")->valuestring;
+	player_details->device.name = cJSON_GetObjectItem(device, "name")->valuestring;
+	player_details->device.type = cJSON_GetObjectItem(device, "type")->valuestring;
+	player_details->device.is_active = cJSON_IsTrue(cJSON_GetObjectItem(device, "is_active"));
+	player_details->device.is_restricted = cJSON_IsTrue(cJSON_GetObjectItem(device, "is_restricted"));
+	player_details->device.is_private_session = cJSON_IsTrue(cJSON_GetObjectItem(device, "is_private_session"));
+	player_details->device.volume_percent = cJSON_GetObjectItem(device, "volume_percent")->valueint;
+	player_details->progress_ms = cJSON_GetObjectItem(response_json, "progress_ms")->valueint;
+	player_details->is_playing = cJSON_IsTrue(cJSON_GetObjectItem(response_json, "is_playing"));
+	player_details->shuffle_state = cJSON_IsTrue(cJSON_GetObjectItem(response_json, "shuffle_state"));
+	char* repeat_state = cJSON_GetObjectItem(response_json, "repeate_state")->valuestring;
+	if (strcmp(repeat_state, "off") == 0) {
+		player_details->repeat_state = repeat_off;
+	} else if (strcmp(repeat_state, "context") == 0) {
+		player_details->repeat_state = repeat_context;
+	} else {
+		player_details->repeat_state = repeat_track;
+	}
+	if(player_details->is_playing) {
+		currently_playing.is_playing = player_details->is_playing;
+		currently_playing.progress_ms = player_details->progress_ms;
+		cJSON* item = cJSON_GetObjectItem(response_json, "item");
+		currently_playing.duration_ms = cJSON_GetObjectItem(item, "duration_ms")->valueint;
+		currently_playing.track_name = cJSON_GetObjectItem(item, "name")->valuestring;
+		currently_playing.track_uri = cJSON_GetObjectItem(item, "uri")->valuestring;
+	}
+cleanup:
+	if(response_json) cJSON_Delete(response_json);
+	memset(local_response_buf, 0, RESPONSE_BUF_SIZE);
+	memset(authorization_header, 0, 1024);
+	esp_http_client_cleanup(client);
+    return response_data;
 }
