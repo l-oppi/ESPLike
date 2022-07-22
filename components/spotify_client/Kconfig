@@ -1,0 +1,28 @@
+# @Lucas Oppi 2022
+# Configuration file for SpotifyClient component.
+
+menu "Spotify Client Configuration"
+    config SPOTIFY_CLIENT_ID
+        string "Spotify Client ID"
+        default "EMPTY"
+        help
+            Spotify Client ID
+
+    config SPOTIFY_CLIENT_SECRET
+        string "Spotify Client Secret"
+        default "EMPTY"
+        help
+            Spotify Client Secret
+
+    config SPOTIFY_REFRESH_TOKEN
+        string "Spotify Refreh Token"
+        default "EMPTY"
+        help
+            Spotify Refreh Token
+    
+    config DEBUG_SPOTIFY_CLIENT
+        int "SpotifyClient Debug Level"
+        default 0
+        help
+            SpotifyClient Debug Level
+endmenu
