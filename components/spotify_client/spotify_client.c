@@ -146,14 +146,12 @@ bool spotify_refresh_access_token()
 				char* access_token_value = cJSON_GetObjectItem(response_json, "access_token")->valuestring;
                 uint32_t expiration_time = cJSON_GetNumberValue(expires_in);
                 if (access_token_value) {
-                    ESP_LOGI(TAG, "Storing a new access token");
-                    ESP_LOGI(TAG, "Expires in: %ld", expiration_time);
+                    ESP_LOGI(TAG, "Storing a new Access Token");
                     strncpy(spotify_access.access_token, access_token_value, strlen(access_token_value));
 					spotify_access.token_expiration_time = time_seconds() + expiration_time;
                     spotify_access.is_fresh = true;
-                    ESP_LOGI(TAG, "Expires in: %ld", spotify_access.token_expiration_time);
+                    ESP_LOGI(TAG, "Access Token expires in: %d", spotify_access.token_expiration_time);
                 }
-                ESP_LOGI(TAG, "Access Token Found");
             } else {
                 ESP_LOGW(TAG, "Access Token Not Found.");
             }
