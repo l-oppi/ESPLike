@@ -43,7 +43,7 @@
 
 #define SPOTIFY_TOKEN_ENDPOINT "/api/token"
 #define SPOTIFY_CURRENTLY_PLAYING_ENDPOINT "/v1/me/player/currently-playing"
-#define SPOTIFY_PLAYER_ENDPOINT "/v1/me/player"
+#define SPOTIFY_PLAYER_ENDPOINT "/v1/me/player?market=BR"
 #define SPOTIFY_DEVICES_ENDPOINT "/v1/me/player/devices"
 #define SPOTIFY_PLAY_ENDPOINT "/v1/me/player/play"
 #define SPOTIFY_SEARCH_ENDPOINT "/v1/search"
@@ -63,9 +63,9 @@
 
 typedef enum repeat_options_t
 {
-  repeat_track,
-  repeat_context,
-  repeat_off
+  REPEAT_TRACK,
+  REPEAT_CONTEXT,
+  REPEAT_OFF
 } repeat_options_t;
 
 typedef struct spotify_image_t
@@ -135,7 +135,7 @@ typedef struct spotify_access_t
   char client_secret[128];
   char refresh_token[256];
   uint32_t token_expiration_time;
-  char access_token[256];
+  char access_token[SPOTIFY_ACCESS_TOKEN_LENGTH];
 } spotify_access_t;
 
 void spotify_init(void);
