@@ -126,6 +126,7 @@ typedef struct currently_playing_t
   bool is_playing;
   uint32_t progress_ms;
   uint32_t duration_ms;
+  uint32_t timestamp;
 } currently_playing_t;
 
 typedef struct spotify_access_t
@@ -141,4 +142,4 @@ typedef struct spotify_access_t
 void spotify_init(void);
 bool spotify_refresh_access_token(void);
 bool spotify_get_player_details(player_details_t *player_details);
-bool spotify_get_current_playig(void);
+bool spotify_get_current_playing(currently_playing_t *currently_playing);
