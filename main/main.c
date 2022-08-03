@@ -49,4 +49,6 @@ void app_main()
 
 	currently_playing_t currently_playing;
 	spotify_get_current_playing(&currently_playing);
+	if (currently_playing.is_playing)
+		spotify_pause();
 }

@@ -169,7 +169,6 @@ bool spotify_refresh_access_token()
 				char* access_token_value = cJSON_GetObjectItem(response_json, "access_token")->valuestring;
                 uint32_t expiration_time = cJSON_GetNumberValue(expires_in);
                 if (access_token_value) {
-                    ESP_LOGD(TAG, "Storing a new Access Token");
                     strncpy(spotify_access.access_token, access_token_value, strlen(access_token_value));
 					spotify_access.token_expiration_time = time_seconds() + expiration_time;
                     spotify_access.is_fresh = true;
@@ -260,15 +259,6 @@ bool spotify_get_player_details(player_details_t *player_details)
 		} else {
 			player_details->repeat_state = REPEAT_TRACK;
 		}
-	
-		ESP_LOGI(TAG, "Device ID: %s", player_details->device.id);
-		ESP_LOGI(TAG, "Device Name: %s", player_details->device.name);
-		ESP_LOGI(TAG, "Device Type: %s", player_details->device.type);
-		ESP_LOGI(TAG, "Device is_active: %s", player_details->device.is_active ? "true" : "false");
-		ESP_LOGI(TAG, "Device is_private_session: %s", player_details->device.is_private_session ? "true" : "false");
-		ESP_LOGI(TAG, "Device volume_percent: %d", player_details->device.volume_percent);
-		ESP_LOGI(TAG, "Player is_playing: %s", player_details->is_playing ? "true" : "false");
-		ESP_LOGI(TAG, "Player shuffle_state: %s", player_details->shuffle_state ? "true" : "false");
 	}
 cleanup:
 	if(response_json) cJSON_Delete(response_json);
@@ -330,6 +320,7 @@ bool spotify_get_current_playing(currently_playing_t *currently_playing)
 					ESP_LOGW(TAG, "No timestamp found");
 					goto cleanup;
 				}
+				currently_playing->is_playing = timestamp->valueint;
 				currently_playing->is_playing = cJSON_IsTrue(cJSON_GetObjectItem(response_json, "is_playing"));
 				currently_playing->progress_ms = cJSON_GetObjectItem(response_json, "progress_ms")->valueint;
 				cJSON* item = cJSON_GetObjectItem(response_json, "item");
@@ -341,23 +332,34 @@ bool spotify_get_current_playing(currently_playing_t *currently_playing)
 				currently_playing->track_name = cJSON_GetObjectItem(item, "name")->valuestring;
 				currently_playing->track_uri = cJSON_GetObjectItem(item, "uri")->valuestring;
 
-				ESP_LOGD(TAG, "Track Name: %s", currently_playing->track_name);
-				ESP_LOGD(TAG, "Track URI: %s", currently_playing->track_uri);
-				ESP_LOGD(TAG, "Track Progress: %d", currently_playing->progress_ms);
-				ESP_LOGD(TAG, "Track Durarion: %d", currently_playing->duration_ms);
-				cJSON* artists = cJSON_GetObjectItem(item, "artists");
-				currently_playing->num_artists = cJSON_GetArraySize(artists);
-				ESP_LOGD(TAG, "Num artists: %d", currently_playing->num_artists);
 				cJSON* current_element = NULL;
-				char *current_key = NULL;
-				cJSON_ArrayForEach(current_element, item) {
-					current_key = current_element->string;
-					if (current_key != NULL)
-					{
-						ESP_LOGD(TAG, "Element: %s", current_key);
+				cJSON* artists = cJSON_GetObjectItem(item, "artists");
+				if (artists != NULL) {
+					currently_playing->num_artists = cJSON_GetArraySize(artists);
+					if (currently_playing->num_artists > SPOTIFY_MAX_NUM_ARTISTS)
+						currently_playing->num_artists = SPOTIFY_MAX_NUM_ARTISTS;
+
+					for (int i = 0; i < currently_playing->num_artists; i++) {
+						current_element = cJSON_GetArrayItem(artists, i);
+						currently_playing->artists[i].artist_name = cJSON_GetObjectItem(current_element, "name")->valuestring;
+						currently_playing->artists[i].artist_uri = cJSON_GetObjectItem(current_element, "uri")->valuestring;
 					}
 				}
-				
+				cJSON* album = cJSON_GetObjectItem(item, "album");
+				if (album != NULL) {
+					current_element = NULL;
+					cJSON* images = cJSON_GetObjectItem(album, "images");
+					currently_playing->album.num_images = cJSON_GetArraySize(images);
+					if (currently_playing->album.num_images > SPOTIFY_NUM_ALBUM_IMAGES)
+						currently_playing->album.num_images = SPOTIFY_NUM_ALBUM_IMAGES;
+
+					for (int i = 0; i < currently_playing->album.num_images; i++) {
+						current_element = cJSON_GetArrayItem(images, i);
+						currently_playing->album.album_images[i].height = cJSON_GetObjectItem(current_element, "height")->valueint;
+						currently_playing->album.album_images[i].width = cJSON_GetObjectItem(current_element, "width")->valueint;
+						currently_playing->album.album_images[i].url = cJSON_GetObjectItem(current_element, "url")->valuestring;
+					}
+				}	
 			} else { 
 				ESP_LOGE(TAG, "Failed to read response");
 				req_status = -1;
@@ -373,4 +375,92 @@ cleanup:
 	memset(authorization_header, 0, 1024);
 	esp_http_client_cleanup(client);
 	return !(req_status < 0);
+}
+
+bool spotify_play(char *context_uri, int queue_pos, int position_ms)
+{
+	if (!spotify_is_access_token_fresh())
+		if(!spotify_refresh_access_token())
+			return false;
+
+	snprintf(authorization_header, 1024, "Bearer %s", spotify_access.access_token);
+
+	int req_status = 0;
+	esp_http_client_config_t config = {
+		.host = SPOTIFY_HOST,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
+		.event_handler = _http_event_handler,
+        .path = SPOTIFY_PLAY_ENDPOINT,
+	};
+	esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Accept", "application/json");
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "Authorization", authorization_header);
+	esp_http_client_set_method(client, HTTP_METHOD_PUT);
+
+	cJSON* data = cJSON_CreateObject();
+	if (context_uri[0] == '\0') {
+		req_status = -1;
+		goto cleanup;
+	}
+	cJSON_AddStringToObject(data, "context_uri", context_uri);
+	if (queue_pos != 0) {
+		cJSON* offset = cJSON_CreateObject();
+		cJSON_AddNumberToObject(offset, "position", queue_pos);
+		cJSON_AddItemToObject(data, "offset", offset);
+	}
+	cJSON_AddNumberToObject(data, "position_ms", position_ms);
+	
+	char* write_buffer = cJSON_Print(data);
+
+	int write_length = sizeof(write_buffer);
+
+	esp_err_t err = esp_http_client_open(client, write_length);
+	err = esp_http_client_write(client, write_buffer, write_length);
+	if (err != ESP_OK) {
+		req_status = -1;
+		goto cleanup;
+	}
+
+cleanup:
+	esp_http_client_close(client);
+	memset(authorization_header, 0, 1024);
+	esp_http_client_cleanup(client);
+	return !(req_status < 0);
+}
+
+void spotify_pause()
+{
+	if (!spotify_is_access_token_fresh())
+		spotify_refresh_access_token();
+
+	snprintf(authorization_header, 1024, "Bearer %s", spotify_access.access_token);
+
+	int content_length;
+	esp_http_client_config_t config = {
+		.host = SPOTIFY_HOST,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
+		.event_handler = _http_event_handler,
+        .path = SPOTIFY_PAUSE_ENDPOINT,
+	};
+	esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Accept", "application/json");
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "Authorization", authorization_header);
+	esp_http_client_set_method(client, HTTP_METHOD_PUT);
+
+	esp_err_t err = esp_http_client_perform(client);
+	if (err == ESP_OK) {
+		ESP_LOGD(TAG, "HTTP GET Status = %d, content_length = %d",
+				esp_http_client_get_status_code(client),
+				esp_http_client_get_content_length(client));
+		content_length = esp_http_client_get_content_length(client);
+
+	} else {
+		ESP_LOGW(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+		content_length = 0;
+	}
+	
+	memset(authorization_header, 0, 1024);
+	esp_http_client_cleanup(client);
 }

@@ -101,28 +101,31 @@ typedef struct spotify_artist_t
   const char *artist_uri;
 } spotify_artist_t;
 
-typedef struct search_result_t
+typedef struct spotify_album_t
 {
   const char *album_name;
   const char *album_uri;
+  const char *album_type;
+  int num_images;
+  spotify_image_t album_images[SPOTIFY_NUM_ALBUM_IMAGES];
+} spotify_album_t;
+
+typedef struct search_result_t
+{
   const char *track_name;
   const char *track_uri;
-  spotify_artist_t artists[SPOTIFY_MAX_NUM_ARTISTS];
-  spotify_image_t album_images[SPOTIFY_NUM_ALBUM_IMAGES];
   int num_artists;
-  int num_images;
+  spotify_artist_t artists[SPOTIFY_MAX_NUM_ARTISTS];
+  spotify_album_t album;
 } search_result_t;
 
 typedef struct currently_playing_t
 {
-  spotify_artist_t artists[SPOTIFY_MAX_NUM_ARTISTS];
   int num_artists;
-  const char *album_name;
-  const char *album_uri;
+  spotify_artist_t artists[SPOTIFY_MAX_NUM_ARTISTS];
   const char *track_name;
   const char *track_uri;
-  spotify_image_t album_images[SPOTIFY_NUM_ALBUM_IMAGES];
-  int num_images;
+  spotify_album_t album;
   bool is_playing;
   uint32_t progress_ms;
   uint32_t duration_ms;
@@ -143,3 +146,5 @@ void spotify_init(void);
 bool spotify_refresh_access_token(void);
 bool spotify_get_player_details(player_details_t *player_details);
 bool spotify_get_current_playing(currently_playing_t *currently_playing);
+bool spotify_play(char *context_uri, int offset, int position_ms);
+void spotify_pause(void);
