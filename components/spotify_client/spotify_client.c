@@ -1,6 +1,6 @@
 #include "spotify_client.h"
 
-#define RESPONSE_BUF_SIZE (1024 * 8)
+#define RESPONSE_BUF_SIZE (1024 * 12)
 static const char *TAG = "NewSpotifyClient";
 spotify_access_t spotify_access;
 static char* local_response_buf = NULL;
@@ -9,8 +9,8 @@ static char* authorization_header = NULL;
 
 esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
-	static char *output_buffer; // Buffer to store response of http request from event handler
-	static int output_len; // Stores number of bytes read
+	static char *output_buffer;
+	static int output_len;
 	switch(evt->event_id) {
 		case HTTP_EVENT_ERROR:
 			ESP_LOGD(TAG, "HTTP_EVENT_ERROR");
@@ -139,7 +139,6 @@ bool spotify_refresh_access_token()
             spotify_access.client_secret,
             spotify_access.refresh_token);
     esp_http_client_set_post_field(client, post_data, strlen(post_data));
-    
 	// GET Token
 	esp_err_t err = esp_http_client_perform(client);
 	if (err == ESP_OK) {
@@ -231,7 +230,7 @@ bool spotify_get_player_details(player_details_t *player_details)
 			}
 		}
 	}
-	esp_http_client_close(client); 
+	esp_http_client_close(client);
 
 	if (data_read > 0) {
 		response_json = cJSON_Parse(local_response_buf);
@@ -282,7 +281,9 @@ bool spotify_get_current_playing(currently_playing_t *currently_playing)
         .transport_type = HTTP_TRANSPORT_OVER_SSL,
 		.event_handler = _http_event_handler,
         .path = SPOTIFY_CURRENTLY_PLAYING_ENDPOINT,
+		.timeout_ms = 3000,
 	};
+	
 	esp_http_client_handle_t client = esp_http_client_init(&config);
     esp_http_client_set_header(client, "Accept", "application/json");
     esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -377,7 +378,7 @@ cleanup:
 	return !(req_status < 0);
 }
 
-bool spotify_play(char *context_uri, int queue_pos, int position_ms)
+bool spotify_play(const char *context_uri, int queue_pos, int position_ms, const char *device_id)
 {
 	if (!spotify_is_access_token_fresh())
 		if(!spotify_refresh_access_token())
@@ -399,7 +400,8 @@ bool spotify_play(char *context_uri, int queue_pos, int position_ms)
 	esp_http_client_set_method(client, HTTP_METHOD_PUT);
 
 	cJSON* data = cJSON_CreateObject();
-	if (context_uri[0] == '\0') {
+
+	if (context_uri[0] == '\0' || context_uri == NULL) {
 		req_status = -1;
 		goto cleanup;
 	}
@@ -410,20 +412,20 @@ bool spotify_play(char *context_uri, int queue_pos, int position_ms)
 		cJSON_AddItemToObject(data, "offset", offset);
 	}
 	cJSON_AddNumberToObject(data, "position_ms", position_ms);
-	
-	char* write_buffer = cJSON_Print(data);
-
-	int write_length = sizeof(write_buffer);
-
-	esp_err_t err = esp_http_client_open(client, write_length);
-	err = esp_http_client_write(client, write_buffer, write_length);
+	if (device_id != NULL)
+		cJSON_AddStringToObject(data, "device_id", device_id);
+	char *post_data = cJSON_Print(data);
+	int data_len = strlen(post_data);
+	esp_http_client_set_post_field(client, post_data, data_len);
+	esp_err_t err = esp_http_client_perform(client);
 	if (err != ESP_OK) {
 		req_status = -1;
 		goto cleanup;
 	}
+	cJSON_Delete(data);
+	free(post_data);
 
 cleanup:
-	esp_http_client_close(client);
 	memset(authorization_header, 0, 1024);
 	esp_http_client_cleanup(client);
 	return !(req_status < 0);
@@ -436,7 +438,6 @@ void spotify_pause()
 
 	snprintf(authorization_header, 1024, "Bearer %s", spotify_access.access_token);
 
-	int content_length;
 	esp_http_client_config_t config = {
 		.host = SPOTIFY_HOST,
         .transport_type = HTTP_TRANSPORT_OVER_SSL,
@@ -454,13 +455,52 @@ void spotify_pause()
 		ESP_LOGD(TAG, "HTTP GET Status = %d, content_length = %d",
 				esp_http_client_get_status_code(client),
 				esp_http_client_get_content_length(client));
-		content_length = esp_http_client_get_content_length(client);
-
 	} else {
 		ESP_LOGW(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
-		content_length = 0;
 	}
 	
+	memset(authorization_header, 0, 1024);
+	esp_http_client_cleanup(client);
+}
+
+void spotify_change_volume(int volume_percent, const char *device_id)
+{
+	if (!spotify_is_access_token_fresh())
+		spotify_refresh_access_token();
+
+	snprintf(authorization_header, 1024, "Bearer %s", spotify_access.access_token);
+	char endpoint[1024];
+	if (device_id == NULL) {
+   		snprintf(endpoint, 1024, "%s?volume_percent=%d", SPOTIFY_VOLUME_ENDPOINT, volume_percent);
+	} else {
+   		snprintf(endpoint, 1024, "%s?volume_percent=%d&device_id=%s", SPOTIFY_VOLUME_ENDPOINT, volume_percent, device_id);
+	}
+
+	esp_http_client_config_t config = {
+		.host = SPOTIFY_HOST,
+        .transport_type = HTTP_TRANSPORT_OVER_SSL,
+		.event_handler = _http_event_handler,
+        .path = endpoint,
+		// .user_data = local_response_buf,
+	};
+	esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Accept", "application/json");
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_header(client, "Authorization", authorization_header);
+	esp_http_client_set_method(client, HTTP_METHOD_PUT);
+	esp_err_t err = esp_http_client_perform(client);
+	if (err == ESP_OK) {
+		ESP_LOGD(TAG, "HTTP GET Status = %d, content_length = %d",
+				esp_http_client_get_status_code(client),
+				esp_http_client_get_content_length(client));
+	} else {
+		ESP_LOGW(TAG, "HTTP GET request failed: %s", esp_err_to_name(err));
+	}
+	// cJSON *response_json = cJSON_Parse(local_response_buf);
+	// char* msg = cJSON_Print(response_json);
+	// printf("%s\n", msg);
+	// cJSON_Delete(response_json);
+	// free(msg);
 	memset(authorization_header, 0, 1024);
 	esp_http_client_cleanup(client);
 }

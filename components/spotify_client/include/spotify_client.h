@@ -48,7 +48,7 @@
 #define SPOTIFY_PLAY_ENDPOINT "/v1/me/player/play"
 #define SPOTIFY_SEARCH_ENDPOINT "/v1/search"
 #define SPOTIFY_PAUSE_ENDPOINT "/v1/me/player/pause"
-#define SPOTIFY_VOLUME_ENDPOINT "/v1/me/player/volume?volume_percent="
+#define SPOTIFY_VOLUME_ENDPOINT "/v1/me/player/volume"
 #define SPOTIFY_SHUFFLE_ENDPOINT "/v1/me/player/shuffle?state="
 #define SPOTIFY_REPEAT_ENDPOINT "/v1/me/player/repeat?state="
 #define SPOTIFY_NEXT_TRACK_ENDPOINT "/v1/me/player/next"
@@ -146,5 +146,6 @@ void spotify_init(void);
 bool spotify_refresh_access_token(void);
 bool spotify_get_player_details(player_details_t *player_details);
 bool spotify_get_current_playing(currently_playing_t *currently_playing);
-bool spotify_play(char *context_uri, int offset, int position_ms);
+bool spotify_play(const char *context_uri, int queue_pos, int position_ms, const char *device_id);
 void spotify_pause(void);
+void spotify_change_volume(int volume_percent, const char *device_id);

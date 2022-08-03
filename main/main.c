@@ -15,10 +15,21 @@ static bool internet_connection =  false;
 
 
 void monitoring_task(void *pvParameter)
-{
+{	
+	player_details_t player_details;
+	currently_playing_t currently_playing;
+	spotify_get_player_details(&player_details);
+	vTaskDelay(pdMS_TO_TICKS(1000));
+	spotify_get_current_playing(&currently_playing);
+	if (currently_playing.is_playing)
+		spotify_pause();
+	vTaskDelay(pdMS_TO_TICKS(1000));
+	spotify_play("spotify:album:5ht7ItJgpBH7W6vJ5BqpPr", 5, 0, player_details.device.id);
+	vTaskDelay(pdMS_TO_TICKS(1000));
+	spotify_change_volume(25, player_details.device.id);
 	for(;;){
 		// ESP_LOGI(TAG, "free heap: %d",esp_get_free_heap_size());
-		vTaskDelay( pdMS_TO_TICKS(10000) );
+		vTaskDelay(pdMS_TO_TICKS(10000));
 	}
 }
 
@@ -45,10 +56,5 @@ void app_main()
 {
 	init_system();
 
-	xTaskCreatePinnedToCore(&monitoring_task, "monitoring_task", 2048, NULL, 1, NULL, 1);
-
-	currently_playing_t currently_playing;
-	spotify_get_current_playing(&currently_playing);
-	if (currently_playing.is_playing)
-		spotify_pause();
+	xTaskCreate(&monitoring_task, "monitor", (2048*8), NULL, 1, NULL);
 }
